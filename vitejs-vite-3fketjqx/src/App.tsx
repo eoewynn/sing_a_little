@@ -1090,7 +1090,7 @@ export default function App() {
       <header className="app-header">
         <div className="header-copy">
           <span className="eyebrow">MUSIC TRAINING STUDIO</span>
-          <h1>Sight Singing Studio</h1>
+          <h1>Sing a Little</h1>
           <p>Read the music. Hear the starting note. Sing with confidence.</p>
         </div>
         <div className="header-mark" aria-hidden="true">♪</div>
