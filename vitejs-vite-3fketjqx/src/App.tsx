@@ -866,7 +866,7 @@ export default function App() {
       const recordingBeatInterval =
         meter === "6/8" ? beatMs / 2 : beatMs;
 
-      let beatIndex = 0;
+      let beatIndex = 1;
 
       const tick = () => {
         if (
