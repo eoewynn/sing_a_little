@@ -458,10 +458,12 @@ function melodyToAbc(
   ].join("\n");
 }
 
+
 function autoCorrelate(
   buffer: Float32Array,
   sampleRate: number,
 ): number | null {
+  // Reject silence, but allow quieter singing and piano notes.
   let rms = 0;
 
   for (let i = 0; i < buffer.length; i++) {
@@ -470,35 +472,89 @@ function autoCorrelate(
 
   rms = Math.sqrt(rms / buffer.length);
 
-  if (rms < 0.012) return null;
+  if (rms < 0.005) return null;
 
   const minPeriod = Math.floor(sampleRate / 900);
   const maxPeriod = Math.min(
     Math.floor(sampleRate / 70),
-    buffer.length - 1,
+    Math.floor(buffer.length / 2),
   );
 
-  let bestOffset = -1;
-  let bestCorrelation = 0;
+  // YIN pitch detection: compare the signal with delayed copies
+  // to find the period that best matches the fundamental pitch.
+  const difference = new Float64Array(maxPeriod + 1);
+  const normalized = new Float64Array(maxPeriod + 1);
+  const limit = buffer.length - maxPeriod;
 
-  for (let offset = minPeriod; offset <= maxPeriod; offset++) {
-    let correlation = 0;
+  for (let tau = 1; tau <= maxPeriod; tau++) {
+    let sum = 0;
 
-    for (let i = 0; i < buffer.length - offset; i++) {
-      correlation += buffer[i] * buffer[i + offset];
+    for (let i = 0; i < limit; i++) {
+      const delta = buffer[i] - buffer[i + tau];
+      sum += delta * delta;
     }
 
-    correlation /= buffer.length - offset;
+    difference[tau] = sum;
+  }
 
-    if (correlation > bestCorrelation) {
-      bestCorrelation = correlation;
-      bestOffset = offset;
+  let runningSum = 0;
+
+  for (let tau = 1; tau <= maxPeriod; tau++) {
+    runningSum += difference[tau];
+
+    normalized[tau] =
+      runningSum === 0
+        ? 1
+        : (difference[tau] * tau) / runningSum;
+  }
+
+  // Find the first convincing period, then refine its local minimum.
+  let bestTau = -1;
+
+  for (let tau = minPeriod; tau < maxPeriod; tau++) {
+    if (normalized[tau] < 0.15) {
+      while (
+        tau + 1 <= maxPeriod &&
+        normalized[tau + 1] < normalized[tau]
+      ) {
+        tau++;
+      }
+
+      bestTau = tau;
+      break;
     }
   }
 
-  if (bestOffset < 0 || bestCorrelation < 0.01) return null;
+  // If no clear period was found, accept a strong overall minimum.
+  if (bestTau === -1) {
+    let bestValue = Infinity;
 
-  const frequency = sampleRate / bestOffset;
+    for (let tau = minPeriod; tau <= maxPeriod; tau++) {
+      if (normalized[tau] < bestValue) {
+        bestValue = normalized[tau];
+        bestTau = tau;
+      }
+    }
+
+    if (bestValue > 0.30) return null;
+  }
+
+  // Parabolic interpolation improves pitch accuracy between periods.
+  let refinedTau = bestTau;
+
+  if (bestTau > minPeriod && bestTau < maxPeriod) {
+    const left = normalized[bestTau - 1];
+    const center = normalized[bestTau];
+    const right = normalized[bestTau + 1];
+    const denominator = left - 2 * center + right;
+
+    if (Math.abs(denominator) > 1e-10) {
+      const adjustment = 0.5 * (left - right) / denominator;
+      refinedTau += Math.max(-1, Math.min(1, adjustment));
+    }
+  }
+
+  const frequency = sampleRate / refinedTau;
 
   if (frequency < 70 || frequency > 900) return null;
 
